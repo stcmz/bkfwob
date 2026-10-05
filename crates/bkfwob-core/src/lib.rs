@@ -4,8 +4,15 @@
 //!
 //! No network code lives here; adapters are in the `bkfwob` crate.
 
+pub mod book;
 pub mod broker;
+pub mod clock;
+pub mod desk;
+pub mod fake;
+pub mod guard;
+pub mod journal;
 pub mod refusal;
+pub mod state;
 pub mod status;
 pub mod tokens;
 pub mod types;
