@@ -1,0 +1,16 @@
+[package]
+name = "bkfwob"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+readme = "../../README.md"
+description = "Broker integration layer for the fwob toolchain: accounts, orders and guardrails over a CLI and MCP"
+keywords = ["broker", "trading", "ibkr", "finance", "fwob"]
+categories = ["command-line-utilities", "finance"]
+
+[dependencies]
+bkfwob-core = { version = "0.1.0", path = "../bkfwob-core" }
+anyhow = "1.0"

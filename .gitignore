@@ -1,0 +1,27 @@
+# Rust build output
+/target/
+**/*.rs.bk
+
+# Broker state: journals, sequence counters, HALT files, fake-broker state
+/.bkfwob/
+*.jsonl
+*.log
+
+# Local configuration and credentials
+/*.local.toml
+.env
+.env.*
+!.env.example
+
+# Scratch and temporary output
+/_*/
+/tmp/
+/temp/
+*.tmp
+*.bak
+
+# Editors and operating systems
+/.idea/
+/.vscode/
+.DS_Store
+Thumbs.db
