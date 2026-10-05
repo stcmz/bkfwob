@@ -21,12 +21,16 @@ use crate::config::{BrokerKind, Config};
 /// Every adapter this build has, behind one type, so the desk stays monomorphic.
 pub enum AnyBroker {
     Fake(Box<FakeBroker>),
+    #[cfg(feature = "ibkr")]
+    Ibkr(Box<crate::ibkr::IbkrBroker>),
 }
 
 macro_rules! each {
     ($self:ident, $b:ident => $e:expr) => {
         match $self {
             AnyBroker::Fake($b) => $e,
+            #[cfg(feature = "ibkr")]
+            AnyBroker::Ibkr($b) => $e,
         }
     };
 }
@@ -141,7 +145,13 @@ impl Target {
                 }
                 AnyBroker::Fake(Box::new(fake))
             }
-            BrokerKind::Ibkr => bail!("the ibkr adapter is not built yet; use the `fake` broker"),
+            #[cfg(feature = "ibkr")]
+            BrokerKind::Ibkr => AnyBroker::Ibkr(Box::new(crate::ibkr::IbkrBroker::connect(
+                &self.config.ibkr,
+                self.mode,
+            )?)),
+            #[cfg(not(feature = "ibkr"))]
+            BrokerKind::Ibkr => bail!("this build has no ibkr adapter (feature `ibkr`)"),
             BrokerKind::Alpaca => bail!("the alpaca adapter is not built yet"),
         };
         let mut desk = Desk::open(broker, state, self.config.limits.clone(), clock)?;

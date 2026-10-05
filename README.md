@@ -5,8 +5,8 @@ market data, [qtfwob](https://github.com/stcmz/qtfwob) owns research and backtes
 the account: positions, orders, fills, and the guardrails around sending them.
 
 **Status: under construction.** The core, the guardrails and the CLI work against the built-in
-`fake` broker; the IBKR adapter and the MCP server are next. Paper accounts only until both have
-been exercised against IB paper.
+`fake` broker and, read-only so far, against IB paper; placing through IB awaits a paper gateway
+with the API read-only setting off. The MCP server is next.
 
 ## What happens when you send an order
 
@@ -66,7 +66,19 @@ errors. State (journals, the id sequence, the `HALT` file) lives in `BKFWOB_STAT
 
 - `crates/bkfwob-core`: broker-neutral types, the `Broker` trait, order lifecycle, guardrails,
   write-ahead journal, reconciliation, and a scriptable fake broker. No network code.
-- `crates/bkfwob`: the CLI and broker adapters.
+- `crates/bkfwob`: the CLI and broker adapters (`ibkr`, on by default).
+
+## IBKR
+
+Talks to IB Gateway or TWS (Gateway ports 4002 paper / 4001 live by default; client id 17, kept
+stable because IB only lets the placing client change an order). Our client order id rides in
+IB's `orderRef`, which is how an order of unknown fate is found again. Paper or live is read
+from the account id (`DU…` is paper), never from the port. Market orders outside regular hours,
+notional quantities and fractional shares are refused up front. Quotes carry the last trade's
+time, so on a closed market a market order is refused as stale.
+
+The opt-in paper suite: `BKFWOB_IBKR_PAPER=1 cargo test -p bkfwob --test ibkr_paper --
+--ignored --test-threads=1`.
 
 ## License
 
