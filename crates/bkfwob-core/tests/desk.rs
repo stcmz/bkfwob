@@ -508,3 +508,28 @@ fn the_intent_is_on_disk_before_the_broker_sees_the_order() {
     desk.place(&limit_buy(2.0)).unwrap();
     assert_eq!(desk.broker().saw_intent_first, [true, true]);
 }
+
+/// The emergency exit: halted, a position four times the per-order cap, and a protective stop
+/// resting that bkfwob did not place. Flatten cancels the stop first (or both could fill) and sells exactly the position.
+#[test]
+fn flatten_works_while_halted_and_past_the_caps() {
+    let mut r = rig();
+    r.fake().set_position("AAPL", 200.0, 90.0);
+    r.desk.halt("panic").unwrap();
+    // A stop placed outside bkfwob (say, by hand in TWS): flatten must clear it too.
+    let sneaky = bkfwob_core::types::OrderRequest {
+        client_id: ClientOrderId::new("manual-1"),
+        spec: order(Side::Sell, 200.0, OrderKind::Stop { stop: 80.0 }),
+    };
+    r.fake().place(&sneaky).unwrap();
+
+    let closing = r.desk.flatten("AAPL").unwrap().unwrap();
+    assert_eq!(closing.spec.side, Side::Sell);
+    assert_eq!(closing.spec.qty, Qty::Shares(200.0));
+    assert_eq!(r.fake().position("AAPL"), 0.0);
+    assert_eq!(
+        r.fake().order(&sneaky.client_id).unwrap().status,
+        OrderStatus::Cancelled
+    );
+    assert!(r.desk.flatten("AAPL").unwrap().is_none(), "already flat");
+}

@@ -31,8 +31,8 @@ use crate::refusal::{Refusal, RefusalCode};
 use crate::state::{Halt, StateDir};
 use crate::status::OrderStatus;
 use crate::types::{
-    Account, ClientOrderId, Fill, Mode, Order, OrderChange, OrderRequest, OrderSpec, Position,
-    Quote,
+    Account, ClientOrderId, Fill, Mode, Order, OrderChange, OrderKind, OrderRequest, OrderSpec,
+    Position, Qty, Quote, Side,
 };
 
 /// How long an order of unknown fate may be missing at the broker before it is declared never
@@ -296,6 +296,54 @@ impl<B: Broker> Desk<B> {
                 return Err(refused(refusal));
             }
         };
+        self.send(spec, assessment.est_notional)
+    }
+
+    /// Closes the whole position in `symbol` at market: cancels every working order in it, then
+    /// sends the opposite of the position. Returns `None` when already flat.
+    ///
+    /// The emergency exit, so it is allowed while halted and skips the size caps and the quote
+    /// requirement — it can only ever take the account toward flat. It is still journaled
+    /// write-ahead and still classified like any other send.
+    pub fn flatten(&mut self, symbol: &str) -> Result<Option<Order>> {
+        self.refresh()?;
+        for order in self.broker.open_orders()? {
+            if order.spec.instrument.symbol == symbol && order.status.is_live() {
+                self.cancel(&order.client_id)?;
+            }
+        }
+        let Some(position) = self
+            .broker
+            .positions()?
+            .into_iter()
+            .find(|p| p.instrument.symbol == symbol && p.qty.abs() > 1e-9)
+        else {
+            return Ok(None);
+        };
+        let side = if position.qty > 0.0 {
+            Side::Sell
+        } else {
+            Side::Buy
+        };
+        let qty = position.qty.abs();
+        let mut spec = OrderSpec::new(
+            position.instrument.clone(),
+            side,
+            Qty::Shares(qty),
+            OrderKind::Market,
+        );
+        spec.tag = Some("flatten".into());
+        let price = self
+            .broker
+            .quote(&position.instrument)
+            .ok()
+            .and_then(|q| q.reference(side))
+            .unwrap_or(position.avg_cost);
+        self.send(&spec, qty * price).map(Some)
+    }
+
+    /// Journals the intent, sends, and classifies the outcome. Guardrails are the caller's job.
+    fn send(&mut self, spec: &OrderSpec, est_notional: f64) -> Result<Order> {
         let request = OrderRequest {
             client_id: self.state.next_client_id(self.now())?,
             spec: spec.clone(),
@@ -304,7 +352,7 @@ impl<B: Broker> Desk<B> {
         self.record(
             Entry::Intent {
                 request: request.clone(),
-                est_notional: assessment.est_notional,
+                est_notional,
             },
             true,
         )?;
@@ -564,6 +612,16 @@ impl<B: Broker> Desk<B> {
     ///   moved without a fill to explain it means something else is trading this account, or our
     ///   records are wrong. Either way trading halts until a person looks.
     pub fn reconcile(&mut self) -> Result<Reconciliation> {
+        let mut report = self.reconcile_orders()?;
+        let now = self.now();
+        self.check_positions(now, &mut report)?;
+        Ok(report)
+    }
+
+    /// The order half of [`Desk::reconcile`]: resolves orders of unknown fate and refreshes
+    /// working ones, without the position check. Safe for read-only commands to run first, since
+    /// it can never halt.
+    pub fn reconcile_orders(&mut self) -> Result<Reconciliation> {
         self.refresh()?;
         let mut report = Reconciliation::default();
         let now = self.now();
@@ -630,7 +688,6 @@ impl<B: Broker> Desk<B> {
             }
         }
 
-        self.check_positions(now, &mut report)?;
         Ok(report)
     }
 

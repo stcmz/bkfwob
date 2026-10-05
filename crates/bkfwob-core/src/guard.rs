@@ -117,7 +117,7 @@ fn working_shares(orders: &[Order], symbol: &str, side: Side, price: f64) -> f64
             Qty::Shares(q) => (q - o.filled_qty).max(0.0),
             Qty::Notional(v) => (v / price - o.filled_qty).max(0.0),
         })
-        .sum()
+        .fold(0.0, |a, b| a + b)
 }
 
 pub fn assess(limits: &Limits, spec: &OrderSpec, s: &Snapshot) -> Result<Assessment, Refusal> {
@@ -208,7 +208,33 @@ pub fn assess(limits: &Limits, spec: &OrderSpec, s: &Snapshot) -> Result<Assessm
         Qty::Notional(v) => (v / reference, v),
     };
 
-    if est_notional > limits.max_order_notional {
+    // An order that only shrinks the position — together with every working order on its side —
+    // is exempt from the size caps. Those caps exist to stop an entry from getting too big; the
+    // same cap blocking the exit of a position that grew past it (a rally, a raised limit last
+    // week) would trap the account in exactly the risk the limits are meant to bound.
+    let same_side = working_shares(s.open_orders, symbol, spec.side, reference);
+    let reducing = match spec.side {
+        Side::Sell => s.position > 0.0 && same_side + est_shares <= s.position + 1e-9,
+        Side::Buy => s.position < 0.0 && same_side + est_shares <= -s.position + 1e-9,
+    };
+
+    // Oversell first: it is the most specific thing that can be wrong with a sell, and the one
+    // that matters most. Counting working sells is what stops a resting stop-loss and a fresh
+    // exit from *both* executing — the live version of the orphaned-stop short.
+    let available = s.position.max(0.0);
+    let committed_sells = same_side + est_shares;
+    if spec.side == Side::Sell && !limits.allow_short && committed_sells > available + 1e-9 {
+        return refuse(
+            RefusalCode::Oversell,
+            format!(
+                "selling {est_shares} with {same_side} already working against a position of \
+                 {}; that would open a short. Cancel or shrink the working sells first",
+                s.position
+            ),
+        );
+    }
+
+    if !reducing && est_notional > limits.max_order_notional {
         return refuse(
             RefusalCode::OrderNotional,
             format!(
@@ -218,7 +244,7 @@ pub fn assess(limits: &Limits, spec: &OrderSpec, s: &Snapshot) -> Result<Assessm
         );
     }
     let charge = est_notional.max(s.charge_floor);
-    if s.charged_today + charge > limits.max_daily_notional {
+    if !reducing && s.charged_today + charge > limits.max_daily_notional {
         return refuse(
             RefusalCode::DailyNotional,
             format!(
@@ -247,26 +273,11 @@ pub fn assess(limits: &Limits, spec: &OrderSpec, s: &Snapshot) -> Result<Assessm
         );
     }
 
-    // Exposure: where the position ends up if this order and every other working order on the
-    // same side fill. Counting the working ones is what stops a resting stop-loss and a fresh
-    // exit from *both* executing — the live version of the orphaned-stop short.
-    let same_side = working_shares(s.open_orders, symbol, spec.side, reference);
+    // Position value: where the position ends up if this order and every other working order on
+    // the same side fill.
     match spec.side {
         Side::Sell => {
-            let committed = same_side + est_shares;
-            let available = s.position.max(0.0);
-            if !limits.allow_short && committed > available + 1e-9 {
-                return refuse(
-                    RefusalCode::Oversell,
-                    format!(
-                        "selling {est_shares} with {same_side} already working against a \
-                         position of {}; that would open a short. Cancel or shrink the working \
-                         sells first",
-                        s.position
-                    ),
-                );
-            }
-            let short = (committed - available).max(0.0);
+            let short = (committed_sells - available).max(0.0);
             if short * reference > limits.max_position_value {
                 return refuse(
                     RefusalCode::PositionValue,
@@ -398,6 +409,32 @@ mod tests {
     }
 
     #[test]
+    fn an_exit_is_never_blocked_by_the_size_caps() {
+        let mut big = Case::new();
+        big.position = 200.0; // ~$20k, four times the per-order cap
+        big.charged = 25_000.0; // and the daily budget spent
+        assert!(big.run(&spec(Side::Sell, 200.0, OrderKind::Market)).is_ok());
+        assert_eq!(
+            big.run(&spec(Side::Buy, 1.0, OrderKind::Market)),
+            Err(RefusalCode::DailyNotional),
+            "adding to it is still capped"
+        );
+        let mut short = Case::new();
+        short.position = -200.0;
+        short.limits.allow_short = true;
+        assert!(
+            short
+                .run(&spec(Side::Buy, 200.0, OrderKind::Market))
+                .is_ok()
+        );
+        assert_eq!(
+            short.run(&spec(Side::Buy, 201.0, OrderKind::Market)),
+            Err(RefusalCode::OrderNotional),
+            "covering past flat opens a new long"
+        );
+    }
+
+    #[test]
     fn working_buys_count_toward_the_position_limit() {
         let mut case = Case::new();
         case.open = vec![working(Side::Buy, 49.0, OrderKind::Limit { limit: 100.0 })];
@@ -505,6 +542,18 @@ mod tests {
         );
         case.limits.allow_short = true;
         assert!(case.run(&spec(Side::Sell, 11.0, OrderKind::Market)).is_ok());
+    }
+
+    /// Selling twice the position at a size that is also over the per-order cap: the refusal
+    /// must name the oversell, the thing actually wrong, not the size.
+    #[test]
+    fn an_oversell_is_reported_as_such_even_when_also_too_big() {
+        let mut case = Case::new();
+        case.position = 40.0;
+        assert_eq!(
+            case.run(&spec(Side::Sell, 80.0, OrderKind::Market)),
+            Err(RefusalCode::Oversell)
+        );
     }
 
     /// The orphaned-stop bug from qtfwob's cis strategy, live: a protective stop is resting for

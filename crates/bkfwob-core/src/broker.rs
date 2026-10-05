@@ -227,6 +227,48 @@ pub trait Broker: Send {
     fn next_event(&mut self, timeout: Duration) -> Result<Option<BrokerEvent>, BrokerError>;
 }
 
+impl<B: Broker + ?Sized> Broker for Box<B> {
+    fn name(&self) -> &str {
+        (**self).name()
+    }
+    fn capabilities(&self) -> Capabilities {
+        (**self).capabilities()
+    }
+    fn account(&mut self) -> Result<Account, BrokerError> {
+        (**self).account()
+    }
+    fn positions(&mut self) -> Result<Vec<Position>, BrokerError> {
+        (**self).positions()
+    }
+    fn open_orders(&mut self) -> Result<Vec<Order>, BrokerError> {
+        (**self).open_orders()
+    }
+    fn find_order(&mut self, id: &ClientOrderId) -> Result<Option<Order>, BrokerError> {
+        (**self).find_order(id)
+    }
+    fn fills(&mut self, since: Timestamp) -> Result<Vec<Fill>, BrokerError> {
+        (**self).fills(since)
+    }
+    fn quote(&mut self, instrument: &Instrument) -> Result<Quote, BrokerError> {
+        (**self).quote(instrument)
+    }
+    fn place(&mut self, request: &OrderRequest) -> Result<Order, BrokerError> {
+        (**self).place(request)
+    }
+    fn modify(&mut self, id: &ClientOrderId, spec: &OrderSpec) -> Result<Order, BrokerError> {
+        (**self).modify(id, spec)
+    }
+    fn cancel(&mut self, id: &ClientOrderId) -> Result<(), BrokerError> {
+        (**self).cancel(id)
+    }
+    fn cancel_all(&mut self) -> Result<(), BrokerError> {
+        (**self).cancel_all()
+    }
+    fn next_event(&mut self, timeout: Duration) -> Result<Option<BrokerEvent>, BrokerError> {
+        (**self).next_event(timeout)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

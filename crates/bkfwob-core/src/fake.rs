@@ -325,7 +325,7 @@ impl Broker for FakeBroker {
                     .unwrap_or(p.avg_cost);
                 p.qty * mark
             })
-            .sum();
+            .fold(0.0, |a, b| a + b);
         Ok(Account {
             id: self.state.account_id.clone(),
             mode: self.state.mode,

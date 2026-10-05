@@ -214,7 +214,7 @@ impl OrderBook {
                 )
             })
             .map(|t| t.est_notional)
-            .sum()
+            .fold(0.0, |a, b| a + b)
     }
 }
 
