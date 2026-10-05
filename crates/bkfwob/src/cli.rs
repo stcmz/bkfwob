@@ -123,6 +123,21 @@ Examples:
   bkfwob watch
   bkfwob watch fills jsonl";
 
+pub const MCP_AFTER_HELP: &str = "\
+Register with an MCP client, e.g. Claude Code:
+
+  { \"mcpServers\": { \"bkfwob\": { \"command\": \"bkfwob\", \"args\": [\"mcp\"] } } }
+
+The broker and mode are fixed when the server starts (config, tokens, environment); no tool can
+select a live account. A live account also needs `[mcp] allow_live = true`. Orders go through
+bkfwob_preview_order, which returns a single-use token that bkfwob_place_order requires.
+Agents can halt trading but not resume it. JSON-RPC on stdin/stdout; messages on stderr.
+
+Examples:
+  bkfwob mcp
+  bkfwob mcp --read-only
+  bkfwob mcp fake";
+
 pub const HALT_AFTER_HELP: &str = "\
 Everything after the command is the reason. Writes the HALT file, which stops every bkfwob
 process from placing or modifying orders, then cancels every working order. If the broker is
@@ -211,6 +226,21 @@ pub enum Command {
     Halt(Items),
     /// Lift the kill switch.
     Resume(Items),
+    /// Serve the account and the guardrailed order path to an LLM agent over MCP (stdio).
+    #[cfg(feature = "mcp")]
+    #[command(after_help = MCP_AFTER_HELP)]
+    Mcp(McpArgs),
+}
+
+#[cfg(feature = "mcp")]
+#[derive(Debug, Args)]
+pub struct McpArgs {
+    /// Expose only the read tools: no preview, place, modify, cancel or halt.
+    #[arg(long)]
+    pub read_only: bool,
+    /// Optional CONFIG.toml, then a broker and mode token.
+    #[arg(value_name = "ITEM", num_args = 0..)]
+    pub items: Vec<String>,
 }
 
 /// Tokens every command understands.
@@ -307,7 +337,7 @@ fn in_range(t: Timestamp, range: &Range) -> bool {
     range.0.is_none_or(|s| t >= s) && range.1.is_none_or(|e| t < e)
 }
 
-fn today_start() -> Timestamp {
+pub(crate) fn today_start() -> Timestamp {
     let tz = exchange_tz();
     Timestamp::now()
         .to_zoned(tz.clone())
@@ -391,11 +421,19 @@ impl Cli {
             | Command::Watch(i)
             | Command::Halt(i)
             | Command::Resume(i) => &i.items,
+            #[cfg(feature = "mcp")]
+            Command::Mcp(m) => &m.items,
         };
         let common = common(items)?;
         let (target, source) = self.target(&common)?;
         let format = common.format;
         let rest = &common.rest;
+        // Before stdout is locked: for the MCP server, stdout is the transport.
+        #[cfg(feature = "mcp")]
+        if let Command::Mcp(m) = &self.command {
+            no_tokens(rest, "mcp")?;
+            return crate::mcp::serve(target, m.read_only);
+        }
         let out = &mut std::io::stdout().lock();
         match &self.command {
             Command::Status(_) => status(&target, &source, rest, format, out),
@@ -1015,6 +1053,8 @@ mod tests {
             FLATTEN_AFTER_HELP,
             WATCH_AFTER_HELP,
             HALT_AFTER_HELP,
+            #[cfg(feature = "mcp")]
+            MCP_AFTER_HELP,
         ] {
             for line in text.lines().map(str::trim) {
                 if !line.starts_with("bkfwob ") {

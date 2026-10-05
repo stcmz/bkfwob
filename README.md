@@ -6,7 +6,7 @@ the account: positions, orders, fills, and the guardrails around sending them.
 
 **Status: under construction.** The core, the guardrails and the CLI work against the built-in
 `fake` broker and, read-only so far, against IB paper; placing through IB awaits a paper gateway
-with the API read-only setting off. The MCP server is next.
+with the API read-only setting off.
 
 ## What happens when you send an order
 
@@ -48,6 +48,23 @@ Common tokens: a broker (`ibkr`, `fake`), a mode (`paper`, `live`), a format (`t
 `md`, `jsonl`), and an optional `CONFIG.toml` as the first argument. Orders default to `day`
 and regular hours (`rth`); extended hours must be asked for with `eth`.
 
+## MCP
+
+`bkfwob mcp` serves the account to an LLM agent over stdio:
+
+```json
+{ "mcpServers": { "bkfwob": { "command": "bkfwob", "args": ["mcp"] } } }
+```
+
+Read tools (`status`, `limits`, `account`, `positions`, `orders`, `fills`, `quote`) and write
+tools (`preview_order`, `place_order`, `modify_order`, `cancel_order`, `cancel_all`, `halt`),
+all prefixed `bkfwob_`. Orders are previewed first: a preview that passes the guardrails returns
+a single-use token, valid 60 seconds, and `place_order` takes only that token, so the agent
+places exactly what it looked at. Refusals come back structured, with the same stable codes as
+the CLI. The broker and mode are fixed when the server starts; no tool can reach a live account,
+and a live account needs `[mcp] allow_live = true` as well as the usual two keys. An agent can
+halt trading but not resume it. `--read-only` removes the write tools from the listing.
+
 ## Paper and live
 
 Paper is the default. Live takes two keys: `mode = "live"` in the config **and** `BKFWOB_LIVE=1`
@@ -66,7 +83,8 @@ errors. State (journals, the id sequence, the `HALT` file) lives in `BKFWOB_STAT
 
 - `crates/bkfwob-core`: broker-neutral types, the `Broker` trait, order lifecycle, guardrails,
   write-ahead journal, reconciliation, and a scriptable fake broker. No network code.
-- `crates/bkfwob`: the CLI and broker adapters (`ibkr`, on by default).
+- `crates/bkfwob`: the CLI and broker adapters (`ibkr`, on by default) and the MCP server
+  (`mcp`, on by default).
 
 ## IBKR
 
