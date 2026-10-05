@@ -421,3 +421,90 @@ impl NowTs for ManualClock {
         bkfwob_core::clock::Clock::now(self)
     }
 }
+
+/// A broker that, at the moment it receives an order, checks the journal already holds the
+/// intent for it. "Write-ahead" is a claim about ordering, and only this observes the order.
+struct Spy {
+    inner: FakeBroker,
+    journal: bkfwob_core::journal::Journal,
+    saw_intent_first: Vec<bool>,
+}
+
+impl Broker for Spy {
+    fn name(&self) -> &str {
+        "spy"
+    }
+    fn capabilities(&self) -> bkfwob_core::broker::Capabilities {
+        self.inner.capabilities()
+    }
+    fn account(&mut self) -> Result<bkfwob_core::types::Account, BrokerError> {
+        self.inner.account()
+    }
+    fn positions(&mut self) -> Result<Vec<bkfwob_core::types::Position>, BrokerError> {
+        self.inner.positions()
+    }
+    fn open_orders(&mut self) -> Result<Vec<bkfwob_core::types::Order>, BrokerError> {
+        self.inner.open_orders()
+    }
+    fn find_order(
+        &mut self,
+        id: &ClientOrderId,
+    ) -> Result<Option<bkfwob_core::types::Order>, BrokerError> {
+        self.inner.find_order(id)
+    }
+    fn fills(
+        &mut self,
+        since: jiff::Timestamp,
+    ) -> Result<Vec<bkfwob_core::types::Fill>, BrokerError> {
+        self.inner.fills(since)
+    }
+    fn quote(&mut self, instrument: &Instrument) -> Result<bkfwob_core::types::Quote, BrokerError> {
+        self.inner.quote(instrument)
+    }
+    fn place(
+        &mut self,
+        request: &bkfwob_core::types::OrderRequest,
+    ) -> Result<bkfwob_core::types::Order, BrokerError> {
+        let records = self.journal.read_all().unwrap();
+        self.saw_intent_first.push(records.iter().any(|r| {
+            matches!(&r.entry, bkfwob_core::journal::Entry::Intent { request: i, .. }
+                if i.client_id == request.client_id)
+        }));
+        self.inner.place(request)
+    }
+    fn modify(
+        &mut self,
+        id: &ClientOrderId,
+        spec: &OrderSpec,
+    ) -> Result<bkfwob_core::types::Order, BrokerError> {
+        self.inner.modify(id, spec)
+    }
+    fn cancel(&mut self, id: &ClientOrderId) -> Result<(), BrokerError> {
+        self.inner.cancel(id)
+    }
+    fn cancel_all(&mut self) -> Result<(), BrokerError> {
+        self.inner.cancel_all()
+    }
+    fn next_event(
+        &mut self,
+        timeout: std::time::Duration,
+    ) -> Result<Option<BrokerEvent>, BrokerError> {
+        self.inner.next_event(timeout)
+    }
+}
+
+#[test]
+fn the_intent_is_on_disk_before_the_broker_sees_the_order() {
+    let dir = tempfile::tempdir().unwrap();
+    let clock = ManualClock::new("2026-10-05T14:00:00Z".parse().unwrap());
+    let state = StateDir::open(dir.path(), "spy-paper").unwrap();
+    let spy = Spy {
+        inner: FakeBroker::new(clock.clone(), 100_000.0),
+        journal: bkfwob_core::journal::Journal::open(state.journal_dir()).unwrap(),
+        saw_intent_first: Vec::new(),
+    };
+    let mut desk = Desk::open(spy, state, Limits::default(), clock).unwrap();
+    desk.place(&limit_buy(1.0)).unwrap();
+    desk.place(&limit_buy(2.0)).unwrap();
+    assert_eq!(desk.broker().saw_intent_first, [true, true]);
+}
