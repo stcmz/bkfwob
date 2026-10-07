@@ -98,6 +98,30 @@ time, so on a closed market a market order is refused as stale.
 The opt-in paper suite: `BKFWOB_IBKR_PAPER=1 cargo test -p bkfwob --test ibkr_paper --
 --ignored --test-threads=1`.
 
+## Development
+
+CI (`.github/workflows/ci.yml`) runs rustfmt, clippy, a build with the optional `ibkr` and `mcp`
+features off, the tests on Linux, Windows and macOS, and a check on Rust 1.88, the minimum
+supported version. Enable the rustfmt pre-commit hook per clone with
+`git config core.hooksPath .githooks`.
+
+## Release
+
+From a clean `main` branch that exactly matches `origin/main`, bump, validate,
+commit, tag, and push a release with:
+
+```powershell
+.scriptselease.ps1 patch
+```
+
+The accepted levels are `major`, `minor`, and `patch`. The script updates
+`Cargo.toml` (and the `bkfwob-core` requirement in `crates/bkfwob/Cargo.toml`) and
+`Cargo.lock`, runs formatting, clippy, tests, and the release build, then atomically pushes
+the release commit and annotated `vX.Y.Z` tag. The tag triggers
+`.github/workflows/release.yml`: it validates the tag against the package version, builds
+Linux, Windows and macOS (Intel and Apple Silicon) archives with SHA-256 checksums, publishes
+`bkfwob-core` then `bkfwob` to crates.io, and creates the GitHub release.
+
 ## License
 
 Apache-2.0

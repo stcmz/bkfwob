@@ -24,6 +24,8 @@ jobs:
       - uses: Swatinem/rust-cache@v2
       - run: cargo fmt --all --check
       - run: cargo clippy --all-targets --all-features --locked -- -D warnings
+      # The adapters and the MCP server are optional features; the core CLI must build without them.
+      - run: cargo check -p bkfwob --no-default-features --locked
 
   test:
     name: Test (${{ matrix.os }})
