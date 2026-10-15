@@ -22,7 +22,7 @@ mcp = ["dep:rmcp", "dep:schemars", "dep:tokio"]
 bkfwob-core = { version = "0.1.0", path = "../bkfwob-core" }
 anyhow = "1.0"
 clap = { version = "4.5", features = ["derive"] }
-ibapi = { version = "4.0", optional = true, default-features = false, features = ["sync"] }
+ibapi = { version = "5.1", optional = true, default-features = false, features = ["sync"] }
 jiff = "0.2"
 # Same range and features as mdfwob. rmcp's dependency graph sits on this workspace's 1.88 floor:
 # the lock holds uuid at 1.23.4 because 1.27 needs 1.89. The `Rust 1.88` CI job checks the
